@@ -5,7 +5,7 @@
 # for compatibility with engines like the Quake II Rerelease.
 #
 # Usage:
-# python process_glow_maps.py --config /path/to/your/convert_config.json
+# python process_glow_maps.py [--config ./convert_config.json]
 # ---------------------------------------------------------------------------
 
 import argparse
@@ -64,10 +64,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Convert Quake 4 glow maps (_g, _add) to Quake II RR format (_glow)."
     )
+    default_config = Path.cwd() / "convert_config.json"
     parser.add_argument(
-        "--config", 
-        required=True, 
-        help="Path to the convert_config.json file used by the main converter."
+        "--config",
+        type=Path,
+        default=default_config,
+        help="Path to the convert_config.json file used by the main converter (defaults to ./convert_config.json)."
     )
     args = parser.parse_args()
 
