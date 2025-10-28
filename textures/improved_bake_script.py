@@ -20,33 +20,20 @@ from pathlib import Path
 from math import radians
 from PIL import Image
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from glow_utils import generate_glow_png
+
 def save_glow_greyscale(in_path: str, out_path: str):
-    """
-    Make a greyscale '_glow' copy with black->transparent, white->opaque.
-    Matches the 'black to transparency' behaviour you described.
-    """
-    img = Image.open(in_path).convert("RGBA")
-    # Luma drives alpha (0=transparent, 255=opaque)
-    luma = Image.open(in_path).convert("L")
-    r, g, b, _ = img.split()
-    a = luma
+    """Emit a luminance-driven glow PNG using the shared helper."""
 
-    # Un-premultiply RGB to avoid dark fringes on edges
-    rp, gp, bp, ap = r.load(), g.load(), b.load(), a.load()
-    w, h = img.size
-    for y in range(h):
-        for x in range(w):
-            al = ap[x, y]
-            if al <= 0:
-                rp[x, y] = gp[x, y] = bp[x, y] = 0
-            else:
-                rp[x, y] = min(255, (rp[x, y] * 255) // al)
-                gp[x, y] = min(255, (gp[x, y] * 255) // al)
-                bp[x, y] = min(255, (bp[x, y] * 255) // al)
-
-    out = Image.merge("RGBA", (r, g, b, a))
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    out.save(out_path)
+    result = generate_glow_png(Path(in_path), Path(out_path))
+    if result:
+        print(f"[OK] Glow PNG saved: {result}")
+    else:
+        print(f"[ERROR] Failed to emit glow PNG from {in_path}")
 
 # ======================== ARGUMENT PARSING ========================
 
