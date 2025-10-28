@@ -167,8 +167,15 @@ class Config:
 
     @classmethod
     def from_json(cls, path: str | Path) -> "Config":
-        with open(path, "r", encoding="utf-8") as f:
+        config_path = Path(path)
+        with open(config_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
+
+        config_dir = config_path.resolve().parent
+
+        def looks_absolute(value: str | Path) -> bool:
+            text = str(value)
+            return Path(text).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/].*", text)) or text.startswith("\\\\")
 
         def pick(d: dict, dc_type):
             if not isinstance(d, dict):
@@ -219,7 +226,10 @@ class Config:
         top["base_root"] = base_root_path
         for key in ("dst_base", "blender_exe", "blender_bake_script", "shader_output_dir"):
             if key in raw:
-                top[key] = Path(raw[key])
+                candidate = Path(raw[key])
+                if key == "blender_bake_script" and not looks_absolute(raw[key]):
+                    candidate = (config_dir / candidate).resolve()
+                top[key] = candidate
 
         profiles_raw = raw.get("profiles", {})
         profiles: Dict[str, TitleProfile] = {}
@@ -1535,7 +1545,13 @@ def run_conversion(cfg: Config, profile: TitleProfile):
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="idTech4 -> idTech23 converter")
-    ap.add_argument("--config", required=True, help="Path to convert_config.json")
+    default_config = Path.cwd() / "convert_config.json"
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=default_config,
+        help="Path to convert_config.json (defaults to ./convert_config.json)",
+    )
     ap.add_argument("--profile", help="Profile key to use (overrides config)")
     args = ap.parse_args(argv)
 

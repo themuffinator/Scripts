@@ -572,7 +572,8 @@ def create_comparison_image(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate side-by-side comparison images for Q4 asset conversion.")
-    parser.add_argument("--config", required=True, help="Path to convert_config.json")
+    default_config = Path.cwd() / "convert_config.json"
+    parser.add_argument("--config", type=Path, default=default_config, help="Path to convert_config.json (defaults to ./convert_config.json)")
     
     args = parser.parse_args()
     
