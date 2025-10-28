@@ -1,0 +1,32 @@
+{
+  "base_root": "C:/_SOURCE/_ASSETS/D3",
+  "dst_base": "C:/tools/out_new",
+  "blender_exe": "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe",
+  "blender_bake_script": "C:/tools/improved_bake_script.py",
+  "output_ext": ".tga",
+  "verbose": true,
+  "parallel_jobs": 11,
+  "cache_index": true,
+  "dry_run": false,
+  "force_rebuild": false,
+  "rebuild_if_newer": true,
+  "bake": {
+    "sun_az": 45.0,
+    "sun_el": 55.0,
+    "sun_power": 4.0,
+    "sun_color": [1.0, 1.0, 1.0],
+    "world_ambient": 0.02,
+    "normal_strength": 1.67,
+    "height_strength": 1.67,
+    "samples": 11
+  },
+  "vibrance": {
+    "spec_gain": 1.33,
+    "roughness_bias": -0.05,
+    "sat_gain": 1.0,
+    "contrast": 0.0,
+    "brightness": 0.0,
+    "diffuse_gain": 1.0,
+    "clearcoat_gain": 0.0
+  }
+}
