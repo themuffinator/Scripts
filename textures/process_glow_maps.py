@@ -9,10 +9,10 @@
 # ---------------------------------------------------------------------------
 
 import argparse
-import json
 from pathlib import Path
 
 from glow_utils import generate_glow_png
+from idtech4_to_idtech23_converter import Config
 
 def find_glow_maps(source_root: Path) -> list[Path]:
     """Finds all potential glow maps with _g or _add suffixes."""
@@ -73,18 +73,15 @@ def main():
 
     # Load configuration to get source and destination paths
     try:
-        with open(args.config, 'r') as f:
-            config = json.load(f)
-        
-        source_root = Path(config["base_root"])
-        # Save glow maps within the same destination texture directory
-        dest_root = Path(config["dst_base"])
-        
+        cfg = Config.from_json(args.config)
+        source_root = cfg.base_root
+        dest_root = cfg.dst_base
+
         if not source_root.is_dir():
             print(f"[FATAL] Source directory not found: {source_root}")
             return
 
-    except (FileNotFoundError, KeyError) as e:
+    except (FileNotFoundError, ValueError) as e:
         print(f"[FATAL] Could not read config file or find required keys ('base_root', 'dst_base'). Error: {e}")
         return
 

@@ -183,12 +183,43 @@ class Config:
         vibr = VibranceSettings(**pick(raw.get("vibrance", {}), VibranceSettings))
         quake2 = Quake2Options(**pick(raw.get("quake2", {}), Quake2Options))
 
+        profile_key = (raw.get("profile") or raw.get("profile_key") or "").strip()
+
+        def resolve_base_root(value):
+            if isinstance(value, dict):
+                candidates = []
+                if profile_key:
+                    candidates.append(profile_key)
+                if "default" not in candidates:
+                    candidates.append("default")
+                selected = None
+                for key in candidates:
+                    if key in value and value[key]:
+                        selected = value[key]
+                        break
+                if selected is None:
+                    for candidate in value.values():
+                        if candidate:
+                            selected = candidate
+                            break
+                if selected is None:
+                    raise ValueError("No usable base_root entry found for the selected profile.")
+                return Path(selected)
+            if isinstance(value, str) and value:
+                return Path(value)
+            if value is None:
+                return None
+            raise ValueError("Unsupported base_root configuration; expected string or mapping.")
+
+        base_root_path = resolve_base_root(raw.get("base_root"))
+        if base_root_path is None:
+            raise ValueError("base_root must be specified in the configuration file.")
+
         top = pick(raw, Config)
-        for key in ("base_root", "dst_base", "blender_exe", "blender_bake_script", "shader_output_dir"):
+        top["base_root"] = base_root_path
+        for key in ("dst_base", "blender_exe", "blender_bake_script", "shader_output_dir"):
             if key in raw:
                 top[key] = Path(raw[key])
-
-        profile_key = raw.get("profile") or raw.get("profile_key") or ""
 
         profiles_raw = raw.get("profiles", {})
         profiles: Dict[str, TitleProfile] = {}
