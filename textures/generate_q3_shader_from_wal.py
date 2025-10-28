@@ -176,7 +176,7 @@ def split_anim_name(base_name):
 
 # ---------------- glow helpers ----------------
 def find_glow_any(base_fs_noext, base_rel_noext):
-    for ext in (".tga", ".png", ".jpg"):
+    for ext in (".png", ".tga", ".jpg"):
         cand = base_fs_noext + "_glow" + ext
         if os.path.isfile(cand):
             return base_rel_noext + "_glow" + ext

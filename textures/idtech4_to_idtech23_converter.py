@@ -38,6 +38,11 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from collections import defaultdict
 
+try:  # pragma: no cover - import shim for package/standalone execution
+    from .glow_utils import generate_glow_png
+except ImportError:  # pragma: no cover - direct script execution
+    from glow_utils import generate_glow_png
+
 # ---------------------------------------------------------------------------
 # Configuration dataclasses and JSON loader
 # ---------------------------------------------------------------------------
@@ -1438,7 +1443,7 @@ def run_conversion(cfg: Config, profile: TitleProfile):
                 add_noext = apply_suffix(q3_noext, "add", idx)
                 glow_noext = apply_suffix(q3_noext, "glow", idx)
                 add_out = cfg.dst_base / (add_noext + f".{output_format}")
-                glow_out = cfg.dst_base / (glow_noext + f".{output_format}")
+                glow_out_hint = cfg.dst_base / glow_noext
 
                 add_src = index.resolve(original_token)
                 if not add_src:
@@ -1456,8 +1461,15 @@ def run_conversion(cfg: Config, profile: TitleProfile):
                         except Exception as exc:
                             write_log_lines(log_path, [f"[WARN] _add copy failed: {exc}"])
 
-                if not black_to_transparency_glow(add_src, glow_out, log_path):
+                glow_created = generate_glow_png(
+                    add_src,
+                    glow_out_hint,
+                    logger=lambda msg: write_log_lines(log_path, [msg]),
+                )
+                if not glow_created:
                     write_log_lines(log_path, [f"[WARN] _glow write failed for {add_src}"])
+                elif not glow_created.exists():
+                    write_log_lines(log_path, [f"[WARN] _glow missing on disk: {glow_created}"])
 
             source_filename = mat.source_file.stem
             shader_block = make_q3_shader(mat, output_format, profile)
