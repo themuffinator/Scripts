@@ -10,6 +10,71 @@
   "dry_run": false,
   "force_rebuild": false,
   "rebuild_if_newer": true,
+  "profile": "doom3",
+  "profiles": {
+    "doom3": {
+      "display_name": "Doom 3",
+      "directory_rules": [
+        {"type": "startswith", "match": "common_", "replacement": "d3_{suffix}"},
+        {"type": "default", "replacement": "d3_{value}"}
+      ],
+      "filename_replacements": [
+        ["noshadows", "nsw"],
+        ["shadows", "sw"],
+        ["shadow", "shw"],
+        ["light", "lt"],
+        ["vertical", "vert"],
+        ["visportal", "vis"],
+        ["support", "supp"],
+        ["nonsolid", "ns"],
+        ["texture", "tex"],
+        ["collision", "coll"]
+      ],
+      "features": {
+        "guide_glow_suffix": "_g",
+        "guide_terminal_suffix": "_add",
+        "max_path_length": 31,
+        "default_prefix": "d3"
+      }
+    },
+    "quake4": {
+      "display_name": "Quake 4",
+      "directory_rules": [
+        {"type": "equals", "match": "command_ship", "replacement": "q4_ship"},
+        {"type": "equals", "match": "consoles", "replacement": "q4_con"},
+        {"type": "equals", "match": "decals", "replacement": "q4_dec"},
+        {"type": "equals", "match": "medlabs", "replacement": "q4_labs"},
+        {"type": "equals", "match": "mptextures", "replacement": "q4_mp"},
+        {"type": "equals", "match": "stroyent", "replacement": "q4_stroy"},
+        {"type": "equals", "match": "terminal", "replacement": "q4_term"},
+        {"type": "equals", "match": "q4x_mptextures", "replacement": "q4x_mp"},
+        {"type": "equals", "match": "q4x_q4xdm2", "replacement": "q4x_dm2"},
+        {"type": "equals", "match": "q4x_powercore", "replacement": "q4x_power"},
+        {"type": "equals", "match": "q4x_speeder", "replacement": "q4x_speed"},
+        {"type": "startswith", "match": "q4x_", "replacement": "{value}"},
+        {"type": "startswith", "match": "common_", "replacement": "q4_{suffix}"},
+        {"type": "default", "replacement": "q4_{value}"}
+      ],
+      "filename_replacements": [
+        ["noshadows", "nsw"],
+        ["shadows", "sw"],
+        ["shadow", "shw"],
+        ["light", "lt"],
+        ["vertical", "vert"],
+        ["visportal", "vis"],
+        ["support", "supp"],
+        ["nonsolid", "ns"],
+        ["texture", "tex"],
+        ["collision", "coll"]
+      ],
+      "features": {
+        "guide_glow_suffix": "_g",
+        "guide_terminal_suffix": "_add",
+        "max_path_length": 31,
+        "default_prefix": "q4"
+      }
+    }
+  },
   "bake": {
     "sun_az": 45.0,
     "sun_el": 55.0,
