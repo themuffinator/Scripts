@@ -11,7 +11,8 @@
 import argparse
 import json
 from pathlib import Path
-from PIL import Image
+
+from glow_utils import generate_glow_png
 
 def find_glow_maps(source_root: Path) -> list[Path]:
     """Finds all potential glow maps with _g or _add suffixes."""
@@ -43,23 +44,18 @@ def process_and_save_map(source_path: Path, source_root: Path, dest_root: Path):
             # This case should not be hit if called correctly
             return
 
-        new_name = new_stem + source_path.suffix
+        new_name = new_stem + ".png"
         
         # Determine the relative path to preserve the directory structure
         relative_path = source_path.relative_to(source_root).parent / new_name
         dest_path = dest_root / relative_path
 
-        # Create the destination directory if it doesn't exist
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Open the source image
-        with Image.open(source_path) as img:
-            # Convert to greyscale ('L' mode in Pillow)
-            greyscale_img = img.convert('L')
-            
-            # Save the new image
-            greyscale_img.save(dest_path)
-            print(f"  [OK] Converted {source_path.name} -> {dest_path}")
+        # Create the glow PNG
+        emitted = generate_glow_png(source_path, dest_path)
+        if emitted:
+            print(f"  [OK] Converted {source_path.name} -> {emitted}")
+        else:
+            print(f"  [ERROR] Failed to process {source_path.name}: could not emit glow PNG")
 
     except Exception as e:
         print(f"  [ERROR] Failed to process {source_path.name}: {e}")
