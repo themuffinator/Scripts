@@ -10,6 +10,14 @@
   "dry_run": false,
   "force_rebuild": false,
   "rebuild_if_newer": true,
+  "quake2": {
+    "enabled": true,
+    "palette_path": "pics/colormap.pcx",
+    "scale_percent": 50.0,
+    "alpha_threshold": 128,
+    "skip_auxiliary_maps": true,
+    "light_value": 1000
+  },
   "profile": "doom3",
   "profiles": {
     "doom3": {

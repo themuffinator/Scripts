@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import traceback
@@ -64,6 +65,23 @@ class VibranceSettings:
     brightness: float = 0.0
     diffuse_gain: float = 1.0
     clearcoat_gain: float = 0.0
+
+
+@dataclass
+class Quake2Options:
+    enabled: bool = False
+    palette_path: Optional[Path] = None
+    scale_percent: float = 50.0
+    alpha_threshold: int = 128
+    skip_auxiliary_maps: bool = True
+    light_value: int = 1000
+
+    def resolved_palette(self, base_root: Path) -> Optional[Path]:
+        if not self.palette_path:
+            return None
+        if self.palette_path.is_absolute():
+            return self.palette_path
+        return base_root / self.palette_path
 
 
 @dataclass
@@ -139,6 +157,7 @@ class Config:
     profile_key: str = ""
     bake: BakeSettings = field(default_factory=BakeSettings)
     vibrance: VibranceSettings = field(default_factory=VibranceSettings)
+    quake2: Quake2Options = field(default_factory=Quake2Options)
     profiles: Dict[str, TitleProfile] = field(default_factory=dict)
 
     @classmethod
@@ -157,6 +176,7 @@ class Config:
 
         bake = BakeSettings(**pick(raw.get("bake", {}), BakeSettings))
         vibr = VibranceSettings(**pick(raw.get("vibrance", {}), VibranceSettings))
+        quake2 = Quake2Options(**pick(raw.get("quake2", {}), Quake2Options))
 
         top = pick(raw, Config)
         for key in ("base_root", "dst_base", "blender_exe", "blender_bake_script", "shader_output_dir"):
@@ -182,8 +202,12 @@ class Config:
             )
             profiles[key] = profile
 
+        if quake2.palette_path is not None:
+            quake2.palette_path = Path(quake2.palette_path)
+
         top["bake"] = bake
         top["vibrance"] = vibr
+        top["quake2"] = quake2
         top["profiles"] = profiles
         top["profile_key"] = profile_key
         return Config(**top)
@@ -195,6 +219,18 @@ class Config:
 
 
 IMAGE_EXTS = [".tga", ".dds", ".png", ".jpg", ".jpeg", ".tif", ".bmp"]
+
+
+SURF_LIGHT = 0x00000001
+SURF_WARP = 0x00000008
+SURF_TRANS33 = 0x00000010
+
+CONTENTS_SOLID = 0x00000001
+CONTENTS_WINDOW = 0x00000002
+CONTENTS_WATER = 0x00000020
+
+DEFAULT_Q2_PALETTE_DATA = [0] * (256 * 3)
+Q2_AUX_SUFFIXES = ("_add", "_glow")
 
 
 class AssetIndex:
@@ -884,6 +920,252 @@ def black_to_transparency_glow(in_path: Path, out_path: Path, log_path: Optional
         return False
 
 
+class Quake2Pipeline:
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        self.options = cfg.quake2
+        self.enabled = bool(self.options.enabled)
+        self.Image = None
+        self.palette_img = None
+        self.transparency_color = (0, 0, 0)
+        self.can_write_wal = False
+
+        if not self.enabled:
+            return
+
+        try:
+            from PIL import Image
+        except ImportError:
+            print("[WARN] Pillow is required for Quake II WAL conversion but is not installed. WAL files will not be generated.")
+            return
+
+        self.Image = Image
+        palette_path = self.options.resolved_palette(cfg.base_root)
+        self.palette_img, self.transparency_color = self._load_palette(palette_path)
+        if self.palette_img is not None:
+            self.can_write_wal = True
+
+    def _load_palette(self, palette_path: Optional[Path]):
+        raw_palette = None
+        if palette_path:
+            try:
+                with self.Image.open(palette_path) as pal_img:
+                    if pal_img.mode != "P":
+                        raise ValueError("Palette image is not paletted")
+                    raw_palette = pal_img.getpalette()
+                    if self.cfg.verbose:
+                        print(f"[INFO] Loaded Quake II palette from {palette_path}")
+            except (FileNotFoundError, ValueError) as exc:
+                print(f"[WARN] {exc}. Using built-in Quake II palette.")
+
+        if not raw_palette or len(raw_palette) != 768:
+            if raw_palette and len(raw_palette) != 768:
+                print(f"[WARN] Palette length {len(raw_palette)} invalid; expected 768. Using built-in Quake II palette.")
+            raw_palette = list(DEFAULT_Q2_PALETTE_DATA)
+
+        palette_img = self.Image.new("P", (1, 1))
+        palette_img.putpalette(raw_palette)
+        last_color_index = 255 * 3
+        transparency_color = tuple(raw_palette[last_color_index:last_color_index + 3])
+        return palette_img, transparency_color
+
+    def _is_auxiliary(self, image_path: Path) -> bool:
+        stem = image_path.stem.lower()
+        return any(stem.endswith(suffix) for suffix in Q2_AUX_SUFFIXES)
+
+    def _resample_filter(self, name: str):
+        resampling = getattr(self.Image, "Resampling", self.Image)
+        return getattr(resampling, name, getattr(self.Image, name, self.Image.NEAREST))
+
+    def _scale_image(self, image):
+        scale_percent = max(self.options.scale_percent, 1.0)
+        if abs(scale_percent - 100.0) < 1e-6:
+            return image
+        scale_factor = scale_percent / 100.0
+        new_width = max(1, int(round(image.width * scale_factor)))
+        new_height = max(1, int(round(image.height * scale_factor)))
+        if new_width == image.width and new_height == image.height:
+            return image
+        lanczos = self._resample_filter("LANCZOS")
+        return image.resize((new_width, new_height), lanczos)
+
+    def _derive_flags(self, mat: Material, original_name: str) -> Tuple[int, int, int]:
+        surfaceflags = 0
+        contentflags = CONTENTS_SOLID
+        lightvalue = 0
+
+        material_type = (mat.materialType or "").lower()
+        original_lower = (original_name or mat.name or "").lower()
+
+        if "light" in material_type or "/lights/" in original_lower:
+            surfaceflags |= SURF_LIGHT
+        if "glass" in material_type or "window" in material_type or "/glass" in original_lower:
+            surfaceflags |= SURF_TRANS33
+            contentflags = CONTENTS_WINDOW
+        if any(tok in material_type for tok in ("water", "slime", "liquid")) or any(
+            f"/{tok}/" in original_lower for tok in ("water", "fluids", "liquids")
+        ):
+            surfaceflags |= SURF_WARP
+            contentflags = CONTENTS_WATER
+
+        if mat.translucent and not (surfaceflags & SURF_WARP):
+            surfaceflags |= SURF_TRANS33
+            if contentflags == CONTENTS_SOLID:
+                contentflags = CONTENTS_WINDOW
+
+        if surfaceflags & SURF_LIGHT or "light" in original_lower:
+            lightvalue = int(self.options.light_value)
+
+        return surfaceflags, contentflags, lightvalue
+
+    def _create_wal(self, image_path: Path, wal_path: Path, surfaceflags: int, contentflags: int, lightvalue: int):
+        with self.Image.open(image_path) as src:
+            img_rgba = src.convert("RGBA")
+
+        img_rgba = self._scale_image(img_rgba)
+        width, height = img_rgba.size
+
+        img_rgb = self.Image.new("RGB", (width, height))
+        pixels_rgba = img_rgba.load()
+        pixels_rgb = img_rgb.load()
+
+        threshold = max(0, min(255, int(self.options.alpha_threshold)))
+        for y in range(height):
+            for x in range(width):
+                r, g, b, a = pixels_rgba[x, y]
+                if a < threshold:
+                    pixels_rgb[x, y] = self.transparency_color
+                else:
+                    pixels_rgb[x, y] = (r, g, b)
+
+        dither_none = getattr(getattr(self.Image, "Dither", None), "NONE", 0)
+        img_paletted = img_rgb.quantize(palette=self.palette_img, dither=dither_none)
+
+        mipmaps = [img_paletted]
+        box_filter = self._resample_filter("BOX")
+        for _ in range(3):
+            mip_w, mip_h = mipmaps[-1].size
+            if mip_w <= 1 and mip_h <= 1:
+                break
+            next_size = (max(1, mip_w // 2), max(1, mip_h // 2))
+            if next_size == mipmaps[-1].size:
+                break
+            mipmaps.append(mipmaps[-1].resize(next_size, box_filter))
+
+        wal_path.parent.mkdir(parents=True, exist_ok=True)
+        offsets = [0, 0, 0, 0]
+        header_data_size = 32 + 8 + 16 + 32 + 12
+        current_offset = header_data_size
+        for idx, mip in enumerate(mipmaps):
+            offsets[idx] = current_offset
+            mip_w, mip_h = mip.size
+            current_offset += mip_w * mip_h
+        if mipmaps:
+            last_offset = offsets[len(mipmaps) - 1]
+        else:
+            last_offset = header_data_size
+        for idx in range(len(mipmaps), 4):
+            offsets[idx] = last_offset
+
+        with wal_path.open("wb") as f:
+            name_bytes = wal_path.stem.encode("ascii", errors="ignore")[:32]
+            name_bytes = name_bytes.ljust(32, b"\0")
+            f.write(struct.pack("<32s", name_bytes))
+            f.write(struct.pack("<II", width, height))
+            f.write(struct.pack("<4I", *offsets))
+            f.write(struct.pack("<32s", b""))
+            f.write(struct.pack("<III", surfaceflags, contentflags, lightvalue))
+            for mip in mipmaps:
+                f.write(mip.tobytes())
+
+        if self.cfg.verbose:
+            try:
+                rel = wal_path.relative_to(self.cfg.dst_base)
+            except ValueError:
+                rel = wal_path
+            print(f"[WAL] Wrote {rel} (flags=0x{surfaceflags:08X}, contents=0x{contentflags:08X}, light={lightvalue})")
+
+    def _build_material_name(self, original_name: str, mat: Material, image_path: Path) -> str:
+        tokens: List[str] = []
+
+        original_norm = (original_name or "").replace("\\", "/")
+        if original_norm.startswith("textures/") or original_norm.startswith("models/"):
+            stripped = original_norm.split("/", 1)[1]
+        else:
+            stripped = original_norm
+        parts = [p for p in stripped.split("/") if p]
+        if parts:
+            tokens.append(parts[0])
+            tokens.append(parts[-1])
+
+        new_name = (mat.name or image_path.stem).replace("\\", "/")
+        new_tail = new_name.split("/")[-1]
+        if new_tail:
+            tokens.append(new_tail)
+
+        if mat.materialType:
+            tokens.append(mat.materialType.lower())
+        if mat.translucent:
+            tokens.append("translucent")
+        if mat.twoSided:
+            tokens.append("twosided")
+        if mat.noShadows:
+            tokens.append("noshadows")
+        if mat.nonsolid:
+            tokens.append("nonsolid")
+        if mat.noimpact:
+            tokens.append("noimpact")
+
+        cleaned: List[str] = []
+        for tok in tokens:
+            tok_clean = re.sub(r"[^a-z0-9_]+", "_", tok.lower()).strip("_")
+            if tok_clean and tok_clean not in cleaned:
+                cleaned.append(tok_clean)
+        return "_".join(cleaned) if cleaned else "default"
+
+    def _write_mat(self, image_path: Path, mat: Material, original_name: str):
+        mat_path = image_path.with_suffix(".mat")
+        material_name = self._build_material_name(original_name, mat, image_path)
+        existing = None
+        if mat_path.exists():
+            try:
+                existing = mat_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                existing = None
+        if existing == material_name:
+            return
+        mat_path.parent.mkdir(parents=True, exist_ok=True)
+        mat_path.write_text(material_name + "\n", encoding="utf-8")
+        if self.cfg.verbose:
+            try:
+                rel = mat_path.relative_to(self.cfg.dst_base)
+            except ValueError:
+                rel = mat_path
+            print(f"[MAT] Wrote {rel} -> {material_name}")
+
+    def write_outputs(self, image_path: Path, mat: Material, original_name: str):
+        if not self.enabled:
+            return
+        if self.options.skip_auxiliary_maps and self._is_auxiliary(image_path):
+            return
+        if not image_path.exists():
+            return
+        if image_path.suffix.lower() != ".tga":
+            return
+
+        surfaceflags, contentflags, lightvalue = self._derive_flags(mat, original_name)
+        if self.can_write_wal:
+            try:
+                self._create_wal(image_path, image_path.with_suffix(".wal"), surfaceflags, contentflags, lightvalue)
+            except Exception as exc:
+                print(f"[WARN] Failed to write WAL for {image_path}: {exc}")
+
+        try:
+            self._write_mat(image_path, mat, original_name)
+        except Exception as exc:
+            print(f"[WARN] Failed to write MAT for {image_path}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Blender invocation and shader emission
 # ---------------------------------------------------------------------------
@@ -1075,6 +1357,8 @@ def run_conversion(cfg: Config, profile: TitleProfile):
     for old, new in name_manager.dir_map.items():
         print(f"    '{old}' -> '{new}'")
 
+    quake2_pipeline = Quake2Pipeline(cfg)
+
     parser_failures = [
         name
         for name, mat in interesting.items()
@@ -1145,6 +1429,9 @@ def run_conversion(cfg: Config, profile: TitleProfile):
 
             if cfg.dry_run:
                 continue
+
+            if quake2_pipeline.enabled:
+                quake2_pipeline.write_outputs(out_img, mat, original_name)
 
             q3_noext = f"textures/{new_name}"
             for idx, original_token in enumerate(mat.additive_maps_src):
